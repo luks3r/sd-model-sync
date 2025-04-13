@@ -3,8 +3,8 @@ enabled = true
 path = "C:\\Users\\serge\\Documents\\LLMs\\ComfyUI\\models"
 
 [webui]
-enabled = false
+enabled = true
 path = "C:\\Users\\serge\\Documents\\LLMs\\webui_forge_cu124_torch24\\webui\\models"
 
-[models]
+[general]
 path = "C:\\Users\\serge\\Documents\\LLMs\\Models"
