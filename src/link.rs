@@ -150,6 +150,7 @@ fn create_platform_specific_symlink(source: &std::path::Path, target: &std::path
 
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(source, target)
+        std::os::unix::fs::symlink(source, target)?;
+        Ok(())
     }
 }
