@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use log::{LevelFilter, debug, info};
 use relative_path::{RelativePath, RelativePathBuf};
 use serde::Deserialize;
 
@@ -44,7 +45,7 @@ impl FolderStructure {
         ];
 
         for (from, to_path) in paths {
-            println!("Hard linking {} to {}", from.display(), to_path.display());
+            debug!("Hard linking {} to {}", from.display(), to_path.display());
             link::create_hard_link(&from, &to_path)?;
         }
 
@@ -61,7 +62,7 @@ impl FolderStructure {
         ];
 
         for (from, to_path) in paths {
-            println!("Soft linking {} to {}", from.display(), to_path.display());
+            debug!("Soft linking {} to {}", from.display(), to_path.display());
             link::create_symlink(&from, &to_path)?;
         }
 
@@ -199,40 +200,66 @@ impl Default for Config {
     }
 }
 
+fn setup_logger(verbosity: u8) -> Result<(), String> {
+    let log_level = match verbosity {
+        0 => LevelFilter::Error,
+        1 => LevelFilter::Warn,
+        2 => LevelFilter::Info,
+        3 => LevelFilter::Debug,
+        _ => LevelFilter::Trace,
+    };
+
+    env_logger::Builder::new()
+        .filter_level(log_level)
+        .format_timestamp(None)
+        .format_target(false)
+        .init();
+
+    debug!("Logger initialized with level: {}", log_level);
+    Ok(())
+}
+
 fn main() -> Result<(), String> {
+    let verbosity = std::env::args()
+        .find(|arg| arg.starts_with("-v"))
+        .map(|arg| arg.matches('v').count() as u8)
+        .unwrap_or(2);
+
+    setup_logger(verbosity).map_err(|e| format!("Failed to setup logger: {}", e))?;
+
     let config_file_path = "config.toml";
     let config_contents = std::fs::read_to_string(config_file_path).unwrap_or(String::new());
     let config = toml::from_str::<Config>(&config_contents).unwrap();
-    println!("Current config: {:?}", config);
+    debug!("Current config: {:?}", config);
 
     let models_structure: FolderStructure = config.clone().general.into();
 
     if config.comfyui.enabled {
-        println!("ComfyUI path is set, linking");
+        info!("ComfyUI is enabled, linking");
         let Ok(comfyui_config): Result<FolderStructure, String> = config.clone().comfyui.try_into()
         else {
             return Err("ComfyUI configuration is invalid".to_string());
         };
 
-        println!("Linking {:#?} to {:#?}", models_structure, comfyui_config);
+        debug!("Linking {:#?} to {:#?}", models_structure, comfyui_config);
         if let Err(e) = models_structure.soft_link_to(&comfyui_config) {
             return Err(format!("Failed to link models: {}", e));
         }
-        println!("ComfyUI linked successfully");
+        info!("ComfyUI linked successfully");
     }
 
     if config.webui.enabled {
-        println!("WebUI path is set");
+        info!("WebUI is enabled, linking");
         let Ok(webui_config): Result<FolderStructure, String> = config.clone().webui.try_into()
         else {
             return Err("WebUI configuration is invalid".to_string());
         };
 
-        println!("Linking {:#?} to {:#?}", models_structure, webui_config);
+        debug!("Linking {:#?} to {:#?}", models_structure, webui_config);
         if let Err(e) = models_structure.soft_link_to(&webui_config) {
             return Err(format!("Failed to link models: {}", e));
         };
-        println!("WebUI linked successfully");
+        info!("WebUI linked successfully");
     }
 
     Ok(())
