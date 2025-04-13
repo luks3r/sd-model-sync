@@ -1,14 +1,29 @@
 use std::path::{Path, PathBuf};
 
+use relative_path::{RelativePath, RelativePathBuf};
 use serde::Deserialize;
+
+mod link;
 
 #[derive(Debug, Deserialize, Clone)]
 struct RelativeFolderStructure {
-    checkpoints: String,
-    loras: String,
-    controlnet: String,
-    upscale_models: String,
-    vae: String,
+    checkpoints: RelativePathBuf,
+    loras: RelativePathBuf,
+    controlnet: RelativePathBuf,
+    upscale_models: RelativePathBuf,
+    vae: RelativePathBuf,
+}
+
+impl Default for RelativeFolderStructure {
+    fn default() -> Self {
+        Self {
+            checkpoints: RelativePath::new("checkpoints").to_relative_path_buf(),
+            loras: RelativePath::new("loras").to_relative_path_buf(),
+            controlnet: RelativePath::new("controlnet").to_relative_path_buf(),
+            upscale_models: RelativePath::new("upscale_models").to_relative_path_buf(),
+            vae: RelativePath::new("vae").to_relative_path_buf(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -21,64 +36,52 @@ struct FolderStructure {
 }
 
 impl FolderStructure {
-    fn from_relative(
-        value: &RelativeFolderStructure,
-        path: &PathBuf,
-    ) -> Result<Self, std::io::Error> {
-        let absolute_path = path.canonicalize()?;
-
-        let checkpoints = absolute_path.join(value.checkpoints.clone());
-        println!("Checkpoints path: {:?}", checkpoints.display());
-        let loras = absolute_path.join(value.loras.clone());
-        println!("LoRAs path: {:?}", loras.display());
-        let controlnet = absolute_path.join(value.controlnet.clone());
-        println!("ControlNet path: {:?}", controlnet.display());
-        let upscale_models = absolute_path.join(value.upscale_models.clone());
-        println!("Upscale models path: {:?}", upscale_models.display());
-        let vae = absolute_path.join(value.vae.clone());
-        println!("VAE path: {:?}", vae.display());
-        Ok(Self {
-            checkpoints: checkpoints.canonicalize()?,
-            loras: loras.canonicalize()?,
-            controlnet: controlnet.canonicalize()?,
-            upscale_models: upscale_models.canonicalize()?,
-            vae: vae.canonicalize()?,
-        })
+    fn from_relative(base_path: PathBuf, relative_paths: RelativeFolderStructure) -> Self {
+        Self {
+            checkpoints: relative_paths.checkpoints.to_logical_path(&base_path),
+            loras: relative_paths.loras.to_logical_path(&base_path),
+            controlnet: relative_paths.controlnet.to_logical_path(&base_path),
+            upscale_models: relative_paths.upscale_models.to_logical_path(&base_path),
+            vae: relative_paths.vae.to_logical_path(&base_path),
+        }
     }
 
-    fn hard_link_to(&self, to: &Self) -> Result<(), String> {
-        println!(
-            "Linking from {:?} to {:?}",
-            self.checkpoints, to.checkpoints
-        );
+    fn hard_link_to(&self, to: &Self) -> Result<(), std::io::Error> {
+        let paths = [
+            (&self.checkpoints, &to.checkpoints),
+            (&self.loras, &to.loras),
+            (&self.controlnet, &to.controlnet),
+            (&self.upscale_models, &to.upscale_models),
+            (&self.vae, &to.vae),
+        ];
 
-        println!("Linking from {:?} to {:?}", self.loras, to.loras);
+        for (from, to_path) in paths {
+            println!("Hard linking {} to {}", from.display(), to_path.display());
+            link::create_hard_link(&from, &to_path)?;
+        }
 
-        println!("Linking from {:?} to {:?}", self.controlnet, to.controlnet);
+        Ok(())
+    }
 
-        println!(
-            "Linking from {:?} to {:?}",
-            self.upscale_models, to.upscale_models
-        );
+    fn soft_link_to(&self, to: &Self) -> Result<(), std::io::Error> {
+        let paths = [
+            (&self.checkpoints, &to.checkpoints),
+            (&self.loras, &to.loras),
+            (&self.controlnet, &to.controlnet),
+            (&self.upscale_models, &to.upscale_models),
+            (&self.vae, &to.vae),
+        ];
 
-        println!("Linking from {:?} to {:?}", self.vae, to.vae);
+        for (from, to_path) in paths {
+            println!("Soft linking {} to {}", from.display(), to_path.display());
+            link::create_symlink(&from, &to_path)?;
+        }
+
         Ok(())
     }
 }
 
-impl Default for RelativeFolderStructure {
-    fn default() -> Self {
-        Self {
-            checkpoints: "checkpoints".to_string(),
-            loras: "loras".to_string(),
-            controlnet: "controlnet".to_string(),
-            upscale_models: "upscale_models".to_string(),
-            vae: "vae".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct ComfyUIConfig {
     enabled: bool,
     path: Option<PathBuf>,
@@ -96,7 +99,18 @@ impl Default for ComfyUIConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+impl TryInto<FolderStructure> for ComfyUIConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<FolderStructure, Self::Error> {
+        match self.path {
+            Some(path) => Ok(FolderStructure::from_relative(path, self.config)),
+            None => Err("Path cannot be empty".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct WebUIConfig {
     enabled: bool,
     path: Option<PathBuf>,
@@ -110,17 +124,28 @@ impl Default for WebUIConfig {
             enabled: false,
             path: None,
             config: RelativeFolderStructure {
-                checkpoints: "Stable-diffusion".to_string(),
-                loras: "Lora".to_string(),
-                controlnet: "ControlNet".to_string(),
-                upscale_models: "ESRGAN".to_string(),
-                vae: "VAE".to_string(),
+                checkpoints: RelativePath::new("Stable-diffusion").to_relative_path_buf(),
+                loras: RelativePath::new("Lora").to_relative_path_buf(),
+                controlnet: RelativePath::new("ControlNet").to_relative_path_buf(),
+                upscale_models: RelativePath::new("ESRGAN").to_relative_path_buf(),
+                vae: RelativePath::new("VAE").to_relative_path_buf(),
             },
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+impl TryInto<FolderStructure> for WebUIConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<FolderStructure, Self::Error> {
+        match self.path {
+            Some(path) => Ok(FolderStructure::from_relative(path, self.config)),
+            None => Err("Path cannot be empty".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct ModelsConfig {
     path: PathBuf,
     #[serde(default)]
@@ -136,7 +161,13 @@ impl Default for ModelsConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+impl Into<FolderStructure> for ModelsConfig {
+    fn into(self) -> FolderStructure {
+        FolderStructure::from_relative(self.path.clone(), self.config.clone())
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct Config {
     #[serde(default)]
     comfyui: ComfyUIConfig,
@@ -156,33 +187,42 @@ impl Default for Config {
     }
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), String> {
     let config_file_path = "config.toml";
     let config_contents = std::fs::read_to_string(config_file_path).unwrap_or(String::new());
     let config = toml::from_str::<Config>(&config_contents).unwrap();
+    println!("Current config: {:?}", config);
 
-    let models_path =
-        FolderStructure::from_relative(&config.models.config.clone(), &config.models.path)?;
+    let models_structure: FolderStructure = config.clone().models.into();
 
     if config.comfyui.enabled {
         println!("ComfyUI path is set, linking");
-        if let Some(ref rel_path) = config.comfyui.path {
-            let path = FolderStructure::from_relative(&config.comfyui.config.clone(), rel_path)?;
+        let Ok(folder_structure): Result<FolderStructure, String> =
+            config.clone().comfyui.try_into()
+        else {
+            return Err("ComfyUI configuration is invalid".to_string());
+        };
 
-            let _ = models_path.hard_link_to(&path);
+        println!("Linking {:#?} to {:#?}", models_structure, folder_structure);
+        if let Err(e) = models_structure.soft_link_to(&folder_structure) {
+            return Err(format!("Failed to link models: {}", e));
         }
+        println!("ComfyUI linked successfully");
     }
 
-    if config.webui.enabled && config.webui.path.is_some() {
+    if config.webui.enabled {
         println!("WebUI path is set");
-        if let Some(ref rel_path) = config.webui.path {
-            let path = FolderStructure::from_relative(&config.webui.config.clone(), rel_path)?;
+        let Ok(folder_structure): Result<FolderStructure, String> = config.clone().webui.try_into()
+        else {
+            return Err("WebUI configuration is invalid".to_string());
+        };
 
-            let _ = models_path.hard_link_to(&path);
-        }
+        println!("Linking {:#?} to {:#?}", models_structure, folder_structure);
+        if let Err(e) = models_structure.soft_link_to(&folder_structure) {
+            return Err(format!("Failed to link models: {}", e));
+        };
+        println!("WebUI linked successfully");
     }
 
-    #[cfg(debug_assertions)]
-    println!("Current config: {:?}", config);
     Ok(())
 }
