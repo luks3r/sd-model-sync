@@ -1,6 +1,3 @@
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
-
 mod argparser;
 mod configuration;
 mod link;
