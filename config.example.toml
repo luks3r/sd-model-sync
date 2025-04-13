@@ -1,0 +1,10 @@
+[comfyui]
+enabled = false
+path = "<path to your comfyui models directory>"
+
+[webui]
+enabled = false
+path = "<path to your webui models directory>"
+
+[general]
+path = "<path to your models directory>"

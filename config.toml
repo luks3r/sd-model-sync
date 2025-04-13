@@ -1,6 +1,0 @@
-[comfyui]
-enabled = true
-path = "C:\\Users\\serge\\Documents\\LLMs\\ComfyUI\\models"
-
-[models]
-path = "./models"
