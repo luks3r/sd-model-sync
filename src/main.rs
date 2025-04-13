@@ -1,6 +1,3 @@
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
-
 mod argparser;
 mod configuration;
 mod link;
@@ -102,13 +99,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let comfyui_path = if let Some(c) = config.as_ref() {
-        Some(config.as_ref().unwrap().comfyui.path.clone())
+        Some(c.comfyui.path.clone())
     } else {
         argparser.optional("-cf").ok().map(PathBuf::from)
     };
 
     let webui_path = if let Some(c) = config.as_ref() {
-        Some(config.as_ref().unwrap().webui.path.clone())
+        Some(c.webui.path.clone())
     } else {
         argparser.optional("-w").ok().map(PathBuf::from)
     };
