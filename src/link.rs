@@ -1,14 +1,45 @@
 use log::debug;
 
-pub fn create_hard_link(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<(), std::io::Error> {
+#[derive(Debug)]
+pub enum LinkError {
+    Io(String),
+    InvalidPath(String),
+    Unspecified(String),
+}
+
+impl std::fmt::Display for LinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LinkError::Io(msg) => f.write_str(msg),
+            LinkError::InvalidPath(msg) => f.write_str(msg),
+            LinkError::Unspecified(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl From<std::io::Error> for LinkError {
+    fn from(e: std::io::Error) -> Self {
+        LinkError::Io(e.to_string())
+    }
+}
+
+impl From<LinkError> for std::io::Error {
+    fn from(e: LinkError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    }
+}
+
+impl std::error::Error for LinkError {}
+
+type Result<T> = std::result::Result<T, LinkError>;
+
+pub fn create_hard_link(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
     if source.is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "Cannot hard link directories, use soft_link_to instead",
-        ));
+        )
+        .into());
     }
 
     if target.exists() {
@@ -23,10 +54,7 @@ pub fn create_hard_link(
     Ok(())
 }
 
-pub fn create_symlink(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<(), std::io::Error> {
+pub fn create_symlink(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
     if should_skip_existing_link(source, target)? {
         debug!(
             "Link already exists and points to correct target: {}",
@@ -45,10 +73,7 @@ pub fn create_symlink(
     Ok(())
 }
 
-fn should_skip_existing_link(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<bool, std::io::Error> {
+fn should_skip_existing_link(source: &std::path::Path, target: &std::path::Path) -> Result<bool> {
     if !target.exists() {
         return Ok(false);
     }
@@ -68,17 +93,19 @@ fn should_skip_existing_link(
     Ok(false)
 }
 
-fn remove_existing_path(path: &std::path::Path) -> Result<(), std::io::Error> {
+fn remove_existing_path(path: &std::path::Path) -> Result<()> {
     debug!("Removing existing path: {}", path.display());
 
     if path.is_dir() {
-        std::fs::remove_dir_all(path)
+        std::fs::remove_dir_all(path)?;
+        Ok(())
     } else {
-        std::fs::remove_file(path)
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 }
 
-fn ensure_parent_directory(path: &std::path::Path) -> Result<(), std::io::Error> {
+fn ensure_parent_directory(path: &std::path::Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             debug!("Creating parent directory: {}", parent.display());
@@ -88,10 +115,7 @@ fn ensure_parent_directory(path: &std::path::Path) -> Result<(), std::io::Error>
     Ok(())
 }
 
-fn create_platform_specific_symlink(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<(), std::io::Error> {
+fn create_platform_specific_symlink(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
     #[cfg(windows)]
     {
         if source.is_dir() {
@@ -105,7 +129,8 @@ fn create_platform_specific_symlink(
                         Original error: {}",
                         e
                     ),
-                )),
+                )
+                .into()),
             }
         } else {
             match std::os::windows::fs::symlink_file(source, target) {
@@ -117,13 +142,15 @@ fn create_platform_specific_symlink(
                         privileges on Windows. Original error: {}",
                         e
                     ),
-                )),
+                )
+                .into()),
             }
         }
     }
 
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(source, target)
+        std::os::unix::fs::symlink(source, target)?;
+        Ok(())
     }
 }

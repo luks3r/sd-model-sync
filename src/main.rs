@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use log::{LevelFilter, debug, info};
+use log::{debug, info, LevelFilter};
 use relative_path::{RelativePath, RelativePathBuf};
 use serde::Deserialize;
 
@@ -46,7 +46,7 @@ impl FolderStructure {
 
         for (from, to_path) in paths {
             debug!("Hard linking {} to {}", from.display(), to_path.display());
-            link::create_hard_link(&from, &to_path)?;
+            link::create_hard_link(from, to_path)?;
         }
 
         Ok(())
@@ -63,7 +63,7 @@ impl FolderStructure {
 
         for (from, to_path) in paths {
             debug!("Soft linking {} to {}", from.display(), to_path.display());
-            link::create_symlink(&from, &to_path)?;
+            link::create_symlink(from, to_path)?;
         }
 
         Ok(())
@@ -174,13 +174,13 @@ impl Default for GeneralConfig {
     }
 }
 
-impl Into<FolderStructure> for GeneralConfig {
-    fn into(self) -> FolderStructure {
-        FolderStructure::from_relative(self.path.clone(), self.config.clone())
+impl From<GeneralConfig> for FolderStructure {
+    fn from(value: GeneralConfig) -> Self {
+        FolderStructure::from_relative(value.path, value.config)
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 struct Config {
     #[serde(default)]
     comfyui: ComfyUIConfig,
@@ -188,16 +188,6 @@ struct Config {
     webui: WebUIConfig,
     #[serde(default)]
     general: GeneralConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            comfyui: Default::default(),
-            webui: Default::default(),
-            general: Default::default(),
-        }
-    }
 }
 
 fn setup_logger(verbosity: u8) -> Result<(), String> {
@@ -228,7 +218,7 @@ fn main() -> Result<(), String> {
     setup_logger(verbosity).map_err(|e| format!("Failed to setup logger: {}", e))?;
 
     let config_file_path = "config.toml";
-    let config_contents = std::fs::read_to_string(config_file_path).unwrap_or(String::new());
+    let config_contents = std::fs::read_to_string(config_file_path).unwrap_or_default();
     let config = toml::from_str::<Config>(&config_contents).unwrap();
     debug!("Current config: {:?}", config);
 
@@ -236,8 +226,7 @@ fn main() -> Result<(), String> {
 
     if config.comfyui.enabled {
         info!("ComfyUI is enabled, linking");
-        let Ok(comfyui_config): Result<FolderStructure, String> = config.clone().comfyui.try_into()
-        else {
+        let Ok(comfyui_config): Result<FolderStructure, String> = config.clone().comfyui.try_into() else {
             return Err("ComfyUI configuration is invalid".to_string());
         };
 
@@ -250,8 +239,7 @@ fn main() -> Result<(), String> {
 
     if config.webui.enabled {
         info!("WebUI is enabled, linking");
-        let Ok(webui_config): Result<FolderStructure, String> = config.clone().webui.try_into()
-        else {
+        let Ok(webui_config): Result<FolderStructure, String> = config.clone().webui.try_into() else {
             return Err("WebUI configuration is invalid".to_string());
         };
 
