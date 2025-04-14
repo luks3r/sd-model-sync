@@ -3,7 +3,6 @@ mod configuration;
 mod link;
 
 use std::path::PathBuf;
-
 use argparser::ArgumentParser;
 use configuration::{ComfyUIConfig, Config, FolderStructure, GeneralConfig, WebUIConfig};
 
@@ -46,6 +45,7 @@ fn process_comfyui(
 
     Ok(())
 }
+
 
 fn process_webui(models_structure: &FolderStructure, config: &Option<Config>, webui_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = webui_path {
