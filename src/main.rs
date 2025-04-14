@@ -1,13 +1,39 @@
-mod argparser;
 mod configuration;
 mod link;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::exit};
 
-use argparser::ArgumentParser;
 use configuration::{ComfyUIConfig, Config, FolderStructure, GeneralConfig, WebUIConfig};
 
 use log::{debug, LevelFilter};
+use structopt::StructOpt;
+
+#[derive(StructOpt, Debug)]
+#[structopt(
+    name = "model_sync",
+    about = "Sync models between general directory and ComfyUI or WebUI"
+)]
+struct Args {
+    /// Path to general models directory
+    #[structopt(parse(from_os_str))]
+    general: PathBuf,
+
+    /// Set logging verbosity level
+    #[structopt(short, long, default_value = "0")]
+    verbosity: u8,
+
+    /// Optional path to config file
+    #[structopt(short, long)]
+    toml_config: Option<PathBuf>,
+
+    /// Optional path to comfyui models directory
+    #[structopt(short, long)]
+    comfyui: Option<PathBuf>,
+
+    /// Optional path to webui models directory
+    #[structopt(short, long)]
+    webui: Option<PathBuf>,
+}
 
 fn setup_logger(verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
     let log_level = match verbosity {
@@ -63,37 +89,25 @@ fn process_webui(models_structure: &FolderStructure, config: &Option<Config>, we
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut argparser = ArgumentParser::new();
-    argparser.set_program_name("sd-model-sync");
-    argparser.set_program_description("Sync Stable Diffusion models between different folders");
+    let args: Option<Args> = match Args::from_args_safe() {
+        Ok(args) => Some(args),
+        Err(err) => {
+            match err.kind {
+                structopt::clap::ErrorKind::HelpDisplayed => println!("{}", err.message),
+                structopt::clap::ErrorKind::VersionDisplayed => println!("{}", err.message),
+                _ => println!("{}", err),
+            }
+            None
+        }
+    };
 
-    argparser.add_positional("general", Some("Path to general models directory"));
-    argparser.add_optional(
-        "--config",
-        Some("-c"),
-        Some("Optional path to configuration file"),
-    )?;
-    argparser.add_optional(
-        "--comfyui",
-        Some("-cf"),
-        Some("Optional path to ComfyUI models directory"),
-    )?;
-    argparser.add_optional(
-        "--webui",
-        Some("-w"),
-        Some("Optional path to WebUI models directory"),
-    )?;
-    argparser.add_optional(
-        "--verbosity",
-        Some("-v"),
-        Some("Increase verbosity of the logger"),
-    )?;
+    let Some(parsed_args) = args else {
+        exit(0);
+    };
 
-    argparser.parse()?;
+    let general_path = parsed_args.general;
 
-    let general_path: PathBuf = argparser.positional("general")?.into();
-
-    let config: Option<Config> = argparser.optional("-c").ok().map(|path| {
+    let config: Option<Config> = parsed_args.toml_config.map(|path| {
         let config_data = std::fs::read_to_string(&path).unwrap_or_default();
         toml::from_str(&config_data).unwrap()
     });
@@ -101,19 +115,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let comfyui_path = if let Some(c) = config.as_ref() {
         Some(c.comfyui.path.clone())
     } else {
-        argparser.optional("-cf").ok().map(PathBuf::from)
+        parsed_args.comfyui
     };
 
     let webui_path = if let Some(c) = config.as_ref() {
         Some(c.webui.path.clone())
     } else {
-        argparser.optional("-w").ok().map(PathBuf::from)
+        parsed_args.webui
     };
 
-    let verbosity = argparser
-        .optional("-v")
-        .unwrap_or_else(|_| String::from("0"))
-        .parse::<u8>()?;
+    let verbosity = parsed_args.verbosity;
 
     if comfyui_path.is_none() && webui_path.is_none() && config.is_none() {
         return Err("No paths provided".into());
