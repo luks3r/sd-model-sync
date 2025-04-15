@@ -1,196 +1,41 @@
-use std::path::{Path, PathBuf};
-
-use log::{debug, info, LevelFilter};
-use relative_path::{RelativePath, RelativePathBuf};
-use serde::Deserialize;
-
+mod configuration;
 mod link;
 
-#[derive(Debug, Deserialize, Clone)]
-struct RelativeFolderStructure {
-    checkpoints: RelativePathBuf,
-    loras: RelativePathBuf,
-    controlnet: RelativePathBuf,
-    upscale_models: RelativePathBuf,
-    vae: RelativePathBuf,
+use std::{path::PathBuf, process::exit};
+
+use configuration::{ComfyUIConfig, Config, FolderStructure, GeneralConfig, WebUIConfig};
+
+use log::{debug, LevelFilter};
+use structopt::StructOpt;
+
+#[derive(StructOpt, Debug)]
+#[structopt(
+    name = "model_sync",
+    about = "Sync models between general directory and ComfyUI or WebUI"
+)]
+struct Args {
+    /// Path to general models directory
+    #[structopt(parse(from_os_str))]
+    general: PathBuf,
+
+    /// Set logging verbosity level
+    #[structopt(short, long, default_value = "0")]
+    verbosity: u8,
+
+    /// Optional path to config file
+    #[structopt(short, long)]
+    toml_config: Option<PathBuf>,
+
+    /// Optional path to comfyui models directory
+    #[structopt(short, long)]
+    comfyui: Option<PathBuf>,
+
+    /// Optional path to webui models directory
+    #[structopt(short, long)]
+    webui: Option<PathBuf>,
 }
 
-#[derive(Debug)]
-struct FolderStructure {
-    checkpoints: PathBuf,
-    loras: PathBuf,
-    controlnet: PathBuf,
-    upscale_models: PathBuf,
-    vae: PathBuf,
-}
-
-impl FolderStructure {
-    fn from_relative(base_path: PathBuf, relative_paths: RelativeFolderStructure) -> Self {
-        Self {
-            checkpoints: relative_paths.checkpoints.to_logical_path(&base_path),
-            loras: relative_paths.loras.to_logical_path(&base_path),
-            controlnet: relative_paths.controlnet.to_logical_path(&base_path),
-            upscale_models: relative_paths.upscale_models.to_logical_path(&base_path),
-            vae: relative_paths.vae.to_logical_path(&base_path),
-        }
-    }
-
-    fn hard_link_to(&self, to: &Self) -> Result<(), std::io::Error> {
-        let paths = [
-            (&self.checkpoints, &to.checkpoints),
-            (&self.loras, &to.loras),
-            (&self.controlnet, &to.controlnet),
-            (&self.upscale_models, &to.upscale_models),
-            (&self.vae, &to.vae),
-        ];
-
-        for (from, to_path) in paths {
-            debug!("Hard linking {} to {}", from.display(), to_path.display());
-            link::create_hard_link(from, to_path)?;
-        }
-
-        Ok(())
-    }
-
-    fn soft_link_to(&self, to: &Self) -> Result<(), std::io::Error> {
-        let paths = [
-            (&self.checkpoints, &to.checkpoints),
-            (&self.loras, &to.loras),
-            (&self.controlnet, &to.controlnet),
-            (&self.upscale_models, &to.upscale_models),
-            (&self.vae, &to.vae),
-        ];
-
-        for (from, to_path) in paths {
-            debug!("Soft linking {} to {}", from.display(), to_path.display());
-            link::create_symlink(from, to_path)?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct ComfyUIConfig {
-    enabled: bool,
-    path: Option<PathBuf>,
-    #[serde(default = "get_default_structure_comfyui")]
-    config: RelativeFolderStructure,
-}
-
-fn get_default_structure_comfyui() -> RelativeFolderStructure {
-    RelativeFolderStructure {
-        checkpoints: RelativePath::new("checkpoints").to_relative_path_buf(),
-        loras: RelativePath::new("loras").to_relative_path_buf(),
-        controlnet: RelativePath::new("controlnet").to_relative_path_buf(),
-        upscale_models: RelativePath::new("upscale_models").to_relative_path_buf(),
-        vae: RelativePath::new("vae").to_relative_path_buf(),
-    }
-}
-
-impl Default for ComfyUIConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            path: None,
-            config: get_default_structure_comfyui(),
-        }
-    }
-}
-
-impl TryInto<FolderStructure> for ComfyUIConfig {
-    type Error = String;
-
-    fn try_into(self) -> Result<FolderStructure, Self::Error> {
-        match self.path {
-            Some(path) => Ok(FolderStructure::from_relative(path, self.config)),
-            None => Err("Path cannot be empty".to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct WebUIConfig {
-    enabled: bool,
-    path: Option<PathBuf>,
-    #[serde(default = "get_default_structure_webui")]
-    config: RelativeFolderStructure,
-}
-
-fn get_default_structure_webui() -> RelativeFolderStructure {
-    RelativeFolderStructure {
-        checkpoints: RelativePath::new("Stable-diffusion").to_relative_path_buf(),
-        loras: RelativePath::new("Lora").to_relative_path_buf(),
-        controlnet: RelativePath::new("ControlNet").to_relative_path_buf(),
-        upscale_models: RelativePath::new("ESRGAN").to_relative_path_buf(),
-        vae: RelativePath::new("VAE").to_relative_path_buf(),
-    }
-}
-
-impl Default for WebUIConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            path: None,
-            config: get_default_structure_webui(),
-        }
-    }
-}
-
-impl TryInto<FolderStructure> for WebUIConfig {
-    type Error = String;
-
-    fn try_into(self) -> Result<FolderStructure, Self::Error> {
-        match self.path {
-            Some(path) => Ok(FolderStructure::from_relative(path, self.config.clone())),
-            None => Err("Path cannot be empty".to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct GeneralConfig {
-    path: PathBuf,
-    #[serde(default = "get_default_structure_general")]
-    config: RelativeFolderStructure,
-}
-
-fn get_default_structure_general() -> RelativeFolderStructure {
-    RelativeFolderStructure {
-        checkpoints: RelativePath::new("checkpoints").to_relative_path_buf(),
-        loras: RelativePath::new("loras").to_relative_path_buf(),
-        controlnet: RelativePath::new("controlnet").to_relative_path_buf(),
-        upscale_models: RelativePath::new("upscale_models").to_relative_path_buf(),
-        vae: RelativePath::new("vae").to_relative_path_buf(),
-    }
-}
-
-impl Default for GeneralConfig {
-    fn default() -> Self {
-        Self {
-            path: Path::new("./models").to_path_buf(),
-            config: get_default_structure_general(),
-        }
-    }
-}
-
-impl From<GeneralConfig> for FolderStructure {
-    fn from(value: GeneralConfig) -> Self {
-        FolderStructure::from_relative(value.path, value.config)
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-struct Config {
-    #[serde(default)]
-    comfyui: ComfyUIConfig,
-    #[serde(default)]
-    webui: WebUIConfig,
-    #[serde(default)]
-    general: GeneralConfig,
-}
-
-fn setup_logger(verbosity: u8) -> Result<(), String> {
+fn setup_logger(verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
     let log_level = match verbosity {
         0 => LevelFilter::Error,
         1 => LevelFilter::Warn,
@@ -209,46 +54,92 @@ fn setup_logger(verbosity: u8) -> Result<(), String> {
     Ok(())
 }
 
-fn main() -> Result<(), String> {
-    let verbosity = std::env::args()
-        .find(|arg| arg.starts_with("-v"))
-        .map(|arg| arg.matches('v').count() as u8)
-        .unwrap_or(2);
+fn process_comfyui(
+    models_structure: &FolderStructure,
+    config: &Option<Config>,
+    comfyui_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(path) = comfyui_path {
+        debug!("Linking to ComfyUI: {:?}", path);
 
-    setup_logger(verbosity).map_err(|e| format!("Failed to setup logger: {}", e))?;
-
-    let config_file_path = "config.toml";
-    let config_contents = std::fs::read_to_string(config_file_path).unwrap_or_default();
-    let config = toml::from_str::<Config>(&config_contents).unwrap();
-    debug!("Current config: {:?}", config);
-
-    let models_structure: FolderStructure = config.clone().general.into();
-
-    if config.comfyui.enabled {
-        info!("ComfyUI is enabled, linking");
-        let Ok(comfyui_config): Result<FolderStructure, String> = config.clone().comfyui.try_into() else {
-            return Err("ComfyUI configuration is invalid".to_string());
+        let comfyui_structure: FolderStructure = match config {
+            Some(config) => config.clone().comfyui.try_into()?,
+            None => ComfyUIConfig::new(path).try_into()?,
         };
 
-        debug!("Linking {:#?} to {:#?}", models_structure, comfyui_config);
-        if let Err(e) = models_structure.soft_link_to(&comfyui_config) {
-            return Err(format!("Failed to link models: {}", e));
+        models_structure.soft_link_to(&comfyui_structure)?;
+    }
+
+    Ok(())
+}
+
+fn process_webui(models_structure: &FolderStructure, config: &Option<Config>, webui_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(path) = webui_path {
+        debug!("Linking to WebUI: {:?}", path);
+
+        let webui_structure: FolderStructure = match config {
+            Some(config) => config.clone().webui.try_into()?,
+            None => WebUIConfig::new(path).try_into()?,
+        };
+
+        models_structure.soft_link_to(&webui_structure)?;
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Option<Args> = match Args::from_args_safe() {
+        Ok(args) => Some(args),
+        Err(err) => {
+            match err.kind {
+                structopt::clap::ErrorKind::HelpDisplayed => println!("{}", err.message),
+                structopt::clap::ErrorKind::VersionDisplayed => println!("{}", err.message),
+                _ => println!("{}", err),
+            }
+            None
         }
-        info!("ComfyUI linked successfully");
+    };
+
+    let Some(parsed_args) = args else {
+        exit(0);
+    };
+
+    let general_path = parsed_args.general;
+
+    let config: Option<Config> = parsed_args.toml_config.map(|path| {
+        let config_data = std::fs::read_to_string(&path).unwrap_or_default();
+        toml::from_str(&config_data).unwrap()
+    });
+
+    let comfyui_path = if let Some(c) = config.as_ref() {
+        Some(c.comfyui.path.clone())
+    } else {
+        parsed_args.comfyui
+    };
+
+    let webui_path = if let Some(c) = config.as_ref() {
+        Some(c.webui.path.clone())
+    } else {
+        parsed_args.webui
+    };
+
+    let verbosity = parsed_args.verbosity;
+
+    if comfyui_path.is_none() && webui_path.is_none() && config.is_none() {
+        return Err("No paths provided".into());
     }
 
-    if config.webui.enabled {
-        info!("WebUI is enabled, linking");
-        let Ok(webui_config): Result<FolderStructure, String> = config.clone().webui.try_into() else {
-            return Err("WebUI configuration is invalid".to_string());
-        };
+    setup_logger(verbosity)?;
 
-        debug!("Linking {:#?} to {:#?}", models_structure, webui_config);
-        if let Err(e) = models_structure.soft_link_to(&webui_config) {
-            return Err(format!("Failed to link models: {}", e));
-        };
-        info!("WebUI linked successfully");
+    if let Some(cfg) = &config {
+        debug!("Current config: {:?}", cfg);
     }
+
+    let models_structure: FolderStructure = GeneralConfig::new(general_path).into();
+
+    process_comfyui(&models_structure, &config, comfyui_path)?;
+    process_webui(&models_structure, &config, webui_path)?;
 
     Ok(())
 }
