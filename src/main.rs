@@ -1,10 +1,18 @@
+mod civitai;
 mod configuration;
+mod hash;
 mod link;
 
-use std::{path::PathBuf, process::exit};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::{BufReader, BufWriter, Seek, SeekFrom};
+use std::{path::Path, path::PathBuf, process::exit};
 
 use configuration::{ComfyUIConfig, Config, FolderStructure, GeneralConfig, WebUIConfig};
 
+use civitai::{query_model_info, ModelInfo, ModelType};
+use hash::EldenRing;
 use log::{debug, LevelFilter};
 use structopt::StructOpt;
 
@@ -51,6 +59,111 @@ fn setup_logger(verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     debug!("Logger initialized with level: {}", log_level);
+    Ok(())
+}
+
+fn get_model_info<P: AsRef<Path>>(model: P, cache_path: Option<P>) -> Result<ModelInfo, Box<dyn std::error::Error>> {
+    let model_path = model.as_ref().to_path_buf();
+    let model_path_string = model_path.to_string_lossy().to_string();
+
+    let cache_path = match cache_path {
+        Some(path) => path.as_ref().to_path_buf(),
+        None => PathBuf::from("cache.json"),
+    };
+
+    let mut cach_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(cache_path)?;
+
+    let mut data: HashMap<String, String> = {
+        let reader = BufReader::new(&cach_file);
+        serde_json::from_reader(reader).unwrap_or_default()
+    };
+
+    let hash = if let Entry::Vacant(entry) = data.entry(model_path_string.clone()) {
+        let new_hash = EldenRing::from_file(&model_path)?;
+        entry.insert(new_hash.clone());
+        new_hash
+    } else {
+        data.get(&model_path_string).cloned().unwrap_or_default()
+    };
+
+    cach_file.set_len(0)?;
+    cach_file.seek(SeekFrom::Start(0))?;
+
+    let writer = BufWriter::new(&cach_file);
+    serde_json::to_writer_pretty(writer, &data)?;
+
+    Ok(query_model_info(&hash)?)
+}
+
+fn adopt_orphan(orphan: PathBuf, home: PathBuf, parents: ModelType, nationality: String) -> Result<(), Box<dyn std::error::Error>> {
+    let new_path = home
+        .join(parents.general_directory())
+        .join(nationality)
+        .join(orphan.file_name().unwrap());
+
+    debug!(
+        "Adopting orphan checkpoint: {} to {}",
+        orphan.display(),
+        new_path.display()
+    );
+    std::fs::rename(&orphan, &new_path)?;
+    Ok(())
+}
+
+fn sort_models(root_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let orphaned_models: Vec<PathBuf> = root_path
+        .read_dir()?
+        .filter_map(|dir_entry| match dir_entry {
+            Ok(file) => {
+                let path = file.path();
+                if !path.is_dir() {
+                    if ["safetensors", "ckpt", "pt", "pth", "bin"].contains(
+                        &path
+                            .extension()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default(),
+                    ) {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Err(err) => {
+                debug!("Error reading directory: {}", err);
+                None
+            }
+        })
+        .collect();
+
+    orphaned_models.iter().for_each(|path| {
+        debug!("Orphaned model: {}", path.display());
+        match get_model_info(path, Some(&root_path.join("orphan_cache.json"))) {
+            Ok(info) => {
+                let model_type = info.model_info.model_type;
+                let base_model = info.base_model;
+                adopt_orphan(
+                    path.to_path_buf(),
+                    root_path.clone(),
+                    model_type,
+                    base_model,
+                )
+                .unwrap();
+            }
+            Err(err) => {
+                debug!("Error getting model info: {}", err);
+            }
+        }
+    });
+
     Ok(())
 }
 
@@ -105,7 +218,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exit(0);
     };
 
-    let general_path = parsed_args.general;
+    let general_path = parsed_args.general.canonicalize()?;
 
     let config: Option<Config> = parsed_args.toml_config.map(|path| {
         let config_data = std::fs::read_to_string(&path).unwrap_or_default();
@@ -135,6 +248,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(cfg) = &config {
         debug!("Current config: {:?}", cfg);
     }
+
+    sort_models(general_path.clone())?;
 
     let models_structure: FolderStructure = GeneralConfig::new(general_path).into();
 
