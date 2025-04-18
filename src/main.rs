@@ -239,6 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let verbosity = parsed_args.verbosity;
 
+
     if comfyui_path.is_none() && webui_path.is_none() && config.is_none() {
         return Err("No paths provided".into());
     }
