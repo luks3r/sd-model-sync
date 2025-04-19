@@ -13,6 +13,7 @@ pub struct RelativeFolderStructure {
     pub controlnet: RelativePathBuf,
     pub upscale_models: RelativePathBuf,
     pub vae: RelativePathBuf,
+    pub embeddings: RelativePathBuf,
 }
 
 #[derive(Debug)]
@@ -22,6 +23,7 @@ pub struct FolderStructure {
     pub controlnet: PathBuf,
     pub upscale_models: PathBuf,
     pub vae: PathBuf,
+    pub embeddings: PathBuf,
 }
 
 impl FolderStructure {
@@ -32,6 +34,7 @@ impl FolderStructure {
             controlnet: relative_paths.controlnet.to_logical_path(&base_path),
             upscale_models: relative_paths.upscale_models.to_logical_path(&base_path),
             vae: relative_paths.vae.to_logical_path(&base_path),
+            embeddings: relative_paths.embeddings.to_logical_path(&base_path),
         }
     }
 
@@ -42,6 +45,7 @@ impl FolderStructure {
             (&self.controlnet, &to.controlnet),
             (&self.upscale_models, &to.upscale_models),
             (&self.vae, &to.vae),
+            (&self.embeddings, &to.embeddings),
         ];
 
         for (from, to_path) in paths {
@@ -59,6 +63,7 @@ impl FolderStructure {
             (&self.controlnet, &to.controlnet),
             (&self.upscale_models, &to.upscale_models),
             (&self.vae, &to.vae),
+            (&self.embeddings, &to.embeddings),
         ];
 
         for (from, to_path) in paths {
@@ -93,6 +98,7 @@ pub fn get_default_structure_comfyui() -> RelativeFolderStructure {
         controlnet: RelativePath::new("controlnet").to_relative_path_buf(),
         upscale_models: RelativePath::new("upscale_models").to_relative_path_buf(),
         vae: RelativePath::new("vae").to_relative_path_buf(),
+        embeddings: RelativePath::new("embeddings").to_relative_path_buf(),
     }
 }
 
@@ -125,11 +131,12 @@ impl WebUIConfig {
 
 pub fn get_default_structure_webui() -> RelativeFolderStructure {
     RelativeFolderStructure {
-        checkpoints: RelativePath::new("Stable-diffusion").to_relative_path_buf(),
-        loras: RelativePath::new("Lora").to_relative_path_buf(),
-        controlnet: RelativePath::new("ControlNet").to_relative_path_buf(),
-        upscale_models: RelativePath::new("ESRGAN").to_relative_path_buf(),
-        vae: RelativePath::new("VAE").to_relative_path_buf(),
+        checkpoints: RelativePath::new("models/Stable-diffusion").to_relative_path_buf(),
+        loras: RelativePath::new("models/Lora").to_relative_path_buf(),
+        controlnet: RelativePath::new("models/ControlNet").to_relative_path_buf(),
+        upscale_models: RelativePath::new("models/ESRGAN").to_relative_path_buf(),
+        vae: RelativePath::new("models/VAE").to_relative_path_buf(),
+        embeddings: RelativePath::new("embeddings").to_relative_path_buf(),
     }
 }
 
@@ -150,9 +157,10 @@ pub struct Config {
     pub webui: WebUIConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GeneralConfig {
     pub path: PathBuf,
+    #[serde(default = "get_default_structure_general")]
     pub config: RelativeFolderStructure,
 }
 
@@ -163,6 +171,7 @@ pub fn get_default_structure_general() -> RelativeFolderStructure {
         controlnet: RelativePath::new("controlnet").to_relative_path_buf(),
         upscale_models: RelativePath::new("upscale_models").to_relative_path_buf(),
         vae: RelativePath::new("vae").to_relative_path_buf(),
+        embeddings: RelativePath::new("embeddings").to_relative_path_buf(),
     }
 }
 
