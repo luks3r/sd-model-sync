@@ -118,7 +118,7 @@ pub struct ModelData {
 pub enum ModelType {
     Checkpoint,
     Embedding,
-    #[serde(rename = "LoRA")]
+    #[serde(rename = "LORA")]
     Lora,
     Controlnet,
     Upscaler,

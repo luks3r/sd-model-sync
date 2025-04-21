@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_civitai_query() {
-        let example_hash = "3D3766E175328CDF5B23287E5D662BFCD905E97F91CC09DE3AEE6B442341F906";
+        let example_hash = "EA88289D69C4F091627B4192F9F5EA8467A893D028B6ED8D8E055F135B22A1F2";
         let url = format!("{}{}", API_URL, example_hash);
 
         let first_response = reqwest::blocking::get(&url);
