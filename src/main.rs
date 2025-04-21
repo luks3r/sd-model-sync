@@ -1,20 +1,23 @@
+mod api;
 mod civitai;
 mod configuration;
 mod hash;
 mod link;
 
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom};
-use std::{path::Path, path::PathBuf, process::exit};
+use std::path::PathBuf;
+use std::process::exit;
 
-use configuration::{ComfyUIConfig, Config, FolderStructure, GeneralConfig, WebUIConfig};
-
-use civitai::{query_model_info, ModelInfo, ModelType};
-use hash::EldenRing;
-use log::{debug, LevelFilter};
+use log::debug;
+use log::info;
+use log::LevelFilter;
 use structopt::StructOpt;
+
+use crate::api::process_comfyui;
+use crate::api::process_webui;
+use crate::api::sort_models;
+use crate::configuration::Config;
+use crate::configuration::FolderStructure;
+use crate::configuration::GeneralConfig;
 
 #[derive(StructOpt, Debug)]
 #[structopt(
@@ -62,145 +65,6 @@ fn setup_logger(verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_model_info<P: AsRef<Path>>(model: P, cache_path: Option<P>) -> Result<ModelInfo, Box<dyn std::error::Error>> {
-    let model_path = model.as_ref().to_path_buf();
-    let model_path_string = model_path.to_string_lossy().to_string();
-
-    let cache_path = match cache_path {
-        Some(path) => path.as_ref().to_path_buf(),
-        None => PathBuf::from("cache.json"),
-    };
-
-    let mut cach_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(cache_path)?;
-
-    let mut data: HashMap<String, String> = {
-        let reader = BufReader::new(&cach_file);
-        serde_json::from_reader(reader).unwrap_or_default()
-    };
-
-    let hash = if let Entry::Vacant(entry) = data.entry(model_path_string.clone()) {
-        let new_hash = EldenRing::from_file(&model_path)?;
-        entry.insert(new_hash.clone());
-        new_hash
-    } else {
-        data.get(&model_path_string).cloned().unwrap_or_default()
-    };
-
-    cach_file.set_len(0)?;
-    cach_file.seek(SeekFrom::Start(0))?;
-
-    let writer = BufWriter::new(&cach_file);
-    serde_json::to_writer_pretty(writer, &data)?;
-
-    Ok(query_model_info(&hash)?)
-}
-
-fn adopt_orphan(orphan: PathBuf, home: PathBuf, parents: ModelType, nationality: String) -> Result<(), Box<dyn std::error::Error>> {
-    let new_path = home
-        .join(parents.general_directory())
-        .join(nationality)
-        .join(orphan.file_name().unwrap());
-
-    debug!(
-        "Adopting orphan checkpoint: {} to {}",
-        orphan.display(),
-        new_path.display()
-    );
-    std::fs::rename(&orphan, &new_path)?;
-    Ok(())
-}
-
-fn sort_models(root_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let orphaned_models: Vec<PathBuf> = root_path
-        .read_dir()?
-        .filter_map(|dir_entry| match dir_entry {
-            Ok(file) => {
-                let path = file.path();
-                if !path.is_dir() {
-                    if ["safetensors", "ckpt", "pt", "pth", "bin"].contains(
-                        &path
-                            .extension()
-                            .unwrap_or_default()
-                            .to_str()
-                            .unwrap_or_default(),
-                    ) {
-                        Some(path)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Err(err) => {
-                debug!("Error reading directory: {}", err);
-                None
-            }
-        })
-        .collect();
-
-    orphaned_models.iter().for_each(|path| {
-        debug!("Orphaned model: {}", path.display());
-        match get_model_info(path, Some(&root_path.join("orphan_cache.json"))) {
-            Ok(info) => {
-                let model_type = info.model_info.model_type;
-                let base_model = info.base_model;
-                adopt_orphan(
-                    path.to_path_buf(),
-                    root_path.clone(),
-                    model_type,
-                    base_model,
-                )
-                .unwrap();
-            }
-            Err(err) => {
-                debug!("Error getting model info: {}", err);
-            }
-        }
-    });
-
-    Ok(())
-}
-
-fn process_comfyui(
-    models_structure: &FolderStructure,
-    config: &Option<Config>,
-    comfyui_path: Option<PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(path) = comfyui_path {
-        debug!("Linking to ComfyUI: {:?}", path);
-
-        let comfyui_structure: FolderStructure = match config {
-            Some(config) => config.clone().comfyui.try_into()?,
-            None => ComfyUIConfig::new(path).try_into()?,
-        };
-
-        models_structure.soft_link_to(&comfyui_structure)?;
-    }
-
-    Ok(())
-}
-
-fn process_webui(models_structure: &FolderStructure, config: &Option<Config>, webui_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(path) = webui_path {
-        debug!("Linking to WebUI: {:?}", path);
-
-        let webui_structure: FolderStructure = match config {
-            Some(config) => config.clone().webui.try_into()?,
-            None => WebUIConfig::new(path).try_into()?,
-        };
-
-        models_structure.soft_link_to(&webui_structure)?;
-    }
-
-    Ok(())
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Option<Args> = match Args::from_args_safe() {
         Ok(args) => Some(args),
@@ -219,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let general_path = parsed_args.general.canonicalize()?;
+    info!("General path: {}", general_path.display());
 
     let config: Option<Config> = parsed_args.toml_config.map(|path| {
         let config_data = std::fs::read_to_string(&path).unwrap_or_default();
@@ -239,7 +104,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let verbosity = parsed_args.verbosity;
 
-
     if comfyui_path.is_none() && webui_path.is_none() && config.is_none() {
         return Err("No paths provided".into());
     }
@@ -258,4 +122,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     process_webui(&models_structure, &config, webui_path)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::BufReader;
+
+    use crate::civitai::ModelInfo;
+    use crate::civitai::API_URL;
+    use crate::hash::EldenRing;
+
+    #[test]
+    fn test_eldenring_hash() {
+        let dummy_data: [u8; 1024] = [7; 1024];
+        let dummy_reader = BufReader::new(dummy_data.as_slice());
+        let hash = EldenRing::calculate_hash_sha256(dummy_reader);
+        assert!(hash.is_ok());
+    }
+
+    #[test]
+    fn test_civitai_query() {
+        let example_hash = "3D3766E175328CDF5B23287E5D662BFCD905E97F91CC09DE3AEE6B442341F906";
+        let url = format!("{}{}", API_URL, example_hash);
+
+        let first_response = reqwest::blocking::get(&url);
+        assert!(first_response.is_ok(), "couldn't get response");
+        let first_response = first_response.unwrap();
+
+        let mut response_text: Result<String, reqwest::Error> = Ok(String::default());
+
+        match first_response.status() {
+            reqwest::StatusCode::OK => {
+                response_text = first_response.text();
+            }
+            reqwest::StatusCode::NOT_FOUND => {
+                println!("Warning: model not found");
+            }
+            reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                println!("Warning: service unavailable");
+            }
+            _ => {
+                println!("Warning: couldn't get response");
+            }
+        }
+
+        assert!(response_text.is_ok(), "couldn't get response text");
+        let text = response_text.unwrap();
+        assert!(!text.is_empty(), "response text is empty");
+
+        let json_from_response_text: Result<ModelInfo, serde_json::Error> = serde_json::from_str(&text);
+        assert!(
+            json_from_response_text.is_ok(),
+            "couldn't parse response into JSON: {}",
+            json_from_response_text.err().unwrap()
+        );
+    }
 }
