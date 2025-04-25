@@ -1,10 +1,12 @@
-use crate::link;
-use log::debug;
 use std::path::Path;
 use std::path::PathBuf;
 
-use relative_path::{RelativePath, RelativePathBuf};
+use log::debug;
+use relative_path::RelativePath;
+use relative_path::RelativePathBuf;
 use serde::Deserialize;
+
+use crate::link;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RelativeFolderStructure {

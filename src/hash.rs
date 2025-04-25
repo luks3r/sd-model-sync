@@ -1,7 +1,8 @@
-use data_encoding::HEXUPPER;
-use ring::digest::SHA256;
 use std::io::BufReader;
 use std::path::Path;
+
+use data_encoding::HEXUPPER;
+use ring::digest::SHA256;
 
 #[derive(Debug)]
 pub enum EldenError {
